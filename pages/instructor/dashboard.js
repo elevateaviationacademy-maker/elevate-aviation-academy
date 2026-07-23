@@ -122,6 +122,15 @@ export default function InstructorDashboard() {
     <div>
       <Navbar role="instructor" />
       <div className="container">
+        <div className="dashboard-banner">
+          <img src="/images/dashboard-instructor.jpg" alt="" className="dashboard-banner-img" />
+          <div className="dashboard-banner-overlay" />
+          <div className="dashboard-banner-content">
+            <h2>Instructor dashboard</h2>
+            <p>Manage course content, exams, access, and results — all in one place.</p>
+          </div>
+        </div>
+
         <h2>Add Content</h2>
         <div className="card">
           {message && <p className={message.startsWith("Error") ? "error" : "success"}>{message}</p>}

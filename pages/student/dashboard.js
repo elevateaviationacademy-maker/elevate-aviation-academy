@@ -8,6 +8,7 @@ export default function StudentDashboard() {
   const router = useRouter();
   const [content, setContent] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [fullName, setFullName] = useState("");
 
   useEffect(() => {
     guardAndLoad();
@@ -16,8 +17,9 @@ export default function StudentDashboard() {
   async function guardAndLoad() {
     const { data } = await supabase.auth.getSession();
     if (!data.session) return router.replace("/login");
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.session.user.id).single();
+    const { data: profile } = await supabase.from("profiles").select("role, full_name").eq("id", data.session.user.id).single();
     if (profile?.role === "instructor") return router.replace("/instructor/dashboard");
+    setFullName(profile?.full_name || "");
 
     // RLS ensures this only returns content this student has been granted.
     const { data: rows } = await supabase.from("content").select("*").order("created_at", { ascending: false });
@@ -35,6 +37,15 @@ export default function StudentDashboard() {
     <div>
       <Navbar role="student" />
       <div className="container">
+        <div className="dashboard-banner">
+          <img src="/images/dashboard-student.jpg" alt="" className="dashboard-banner-img" />
+          <div className="dashboard-banner-overlay" />
+          <div className="dashboard-banner-content">
+            <h2>{fullName ? `Welcome back, ${fullName.split(" ")[0]}` : "Welcome back"}</h2>
+            <p>Keep working through your courses and practice exams — every session gets you closer to exam day.</p>
+          </div>
+        </div>
+
         {announcements.length > 0 && (
           <>
             <h2>Announcements</h2>
