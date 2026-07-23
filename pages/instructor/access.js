@@ -104,6 +104,27 @@ export default function AccessControl() {
     setBulkBusy(false);
   }
 
+  async function deleteStudent(student) {
+    const ok = window.confirm(
+      `Permanently delete ${student.full_name || student.email}'s account?\n\nThis removes their login, all access grants, and all exam attempts. This cannot be undone.`
+    );
+    if (!ok) return;
+    setMessage("");
+    const { data: sessionData } = await supabase.auth.getSession();
+    const res = await fetch("/api/admin/delete-student", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionData.session.access_token}`,
+      },
+      body: JSON.stringify({ studentId: student.id }),
+    });
+    const body = await res.json();
+    if (!res.ok) return setMessage("Error: " + body.error);
+    setStudents((prev) => prev.filter((s) => s.id !== student.id));
+    setGrants((prev) => prev.filter((id) => id !== student.id));
+  }
+
   // Group content by subject for the dropdown, so it's easy to find the right item.
   const groupedContent = SUBJECTS.concat(["Unsorted"]).map((s) => ({
     subject: s,
@@ -158,9 +179,14 @@ export default function AccessControl() {
             return (
               <div className="content-item" key={s.id}>
                 <div>{s.full_name || s.email}<span className="badge">{s.email}</span></div>
-                <button className={hasAccess ? "secondary" : ""} onClick={() => toggleAccess(s.id, hasAccess)}>
-                  {hasAccess ? "Revoke" : "Grant"}
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className={hasAccess ? "secondary" : ""} onClick={() => toggleAccess(s.id, hasAccess)}>
+                    {hasAccess ? "Revoke" : "Grant"}
+                  </button>
+                  <button className="danger" onClick={() => deleteStudent(s)}>
+                    Delete
+                  </button>
+                </div>
               </div>
             );
           })}

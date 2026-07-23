@@ -1,0 +1,11 @@
+update profiles 
+set role = 'instructor' 
+where email = 'newinstructor@gmail.com';
+
+
+
+select id, email, role from profiles where email = 'info@elevateaviationacademy.in';
+
+git add .
+git commit -m "Updated something"
+git push
