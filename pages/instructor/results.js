@@ -57,6 +57,26 @@ export default function InstructorResults() {
     setLoading(false);
   }
 
+  async function deleteAttempt(attempt) {
+    const who = attempt.profiles?.full_name || attempt.profiles?.email || "this student";
+    const ok = window.confirm(
+      `Permanently delete ${who}'s "${attempt.exams?.title}" result (${attempt.score}%)?\n\nThis cannot be undone.`
+    );
+    if (!ok) return;
+    const { data: sessionData } = await supabase.auth.getSession();
+    const res = await fetch("/api/admin/delete-attempt", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionData.session.access_token}`,
+      },
+      body: JSON.stringify({ attemptId: attempt.id }),
+    });
+    const body = await res.json();
+    if (!res.ok) return setError("Error: " + body.error);
+    setAttempts((prev) => prev.filter((a) => a.id !== attempt.id));
+  }
+
   if (loading) {
     return (
       <div>
@@ -149,12 +169,17 @@ export default function InstructorResults() {
                                 {a.tab_switches > 0 && ` · ⚠ ${a.tab_switches} tab switch${a.tab_switches > 1 ? "es" : ""}`}
                               </p>
                             </div>
-                            <button
-                              className="secondary"
-                              onClick={() => router.push(`/exam/results?attempt=${a.id}`)}
-                            >
-                              View
-                            </button>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button
+                                className="secondary"
+                                onClick={() => router.push(`/exam/results?attempt=${a.id}`)}
+                              >
+                                View
+                              </button>
+                              <button className="danger" onClick={() => deleteAttempt(a)}>
+                                Delete
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
