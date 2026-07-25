@@ -40,6 +40,7 @@ export default function ProtectedYouTube({ videoId, watermarkText, startSeconds,
     disablekb: "1", // no keyboard shortcuts (space/arrow seek, etc.)
     iv_load_policy: "3", // hide video annotations/cards
     cc_load_policy: "0", // don't force captions on
+    controls: "0", // hide YouTube's own control bar (volume/CC/settings/fullscreen/seek)
   });
   if (startSeconds) params.set("start", String(Math.floor(startSeconds)));
   if (autoplay) params.set("autoplay", "1");
