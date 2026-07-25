@@ -36,6 +36,15 @@ export default async function handler(req, res) {
       .maybeSingle();
     allowed = !!grant;
   }
+  if (!allowed) {
+    const { data: subjectGrant } = await supabaseAdmin
+      .from("subject_access")
+      .select("id")
+      .eq("subject", content.subject)
+      .eq("student_id", userData.user.id)
+      .maybeSingle();
+    allowed = !!subjectGrant;
+  }
   if (!allowed) return res.status(403).json({ error: "You don't have access to this content" });
 
   const response = {

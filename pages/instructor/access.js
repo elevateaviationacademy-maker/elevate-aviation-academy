@@ -12,10 +12,10 @@ export default function AccessControl() {
   const [grants, setGrants] = useState([]);
   const [message, setMessage] = useState("");
 
-  // Bulk (subject-wide) grant state
+  // Standing subject-level access (covers content added later automatically)
   const [bulkSubject, setBulkSubject] = useState(SUBJECTS[0]);
-  const [bulkStudent, setBulkStudent] = useState("");
-  const [bulkBusy, setBulkBusy] = useState(false);
+  const [subjectGrants, setSubjectGrants] = useState([]); // student_ids with standing access to bulkSubject
+  const [bulkBusyId, setBulkBusyId] = useState(null);
   const [bulkMessage, setBulkMessage] = useState("");
 
   useEffect(() => {
@@ -34,12 +34,23 @@ export default function AccessControl() {
 
     const { data: studentRows } = await supabase.from("profiles").select("*").eq("role", "student").order("full_name");
     setStudents(studentRows || []);
-    if (studentRows?.length) setBulkStudent(studentRows[0].id);
+    loadSubjectGrants(SUBJECTS[0]);
   }
 
   useEffect(() => {
     if (selectedContent) loadGrants();
   }, [selectedContent]);
+
+  async function loadSubjectGrants(subject) {
+    const { data } = await supabase.from("subject_access").select("student_id").eq("subject", subject);
+    setSubjectGrants((data || []).map((g) => g.student_id));
+  }
+
+  function handleBulkSubjectChange(subject) {
+    setBulkSubject(subject);
+    setBulkMessage("");
+    loadSubjectGrants(subject);
+  }
 
   async function loadGrants() {
     const { data } = await supabase.from("access_grants").select("student_id").eq("content_id", selectedContent);
@@ -67,41 +78,40 @@ export default function AccessControl() {
     loadGrants();
   }
 
-  async function bulkGrantSubject(revoke) {
-    setBulkBusy(true);
+  async function toggleSubjectAccess(studentId, hasAccess) {
+    setBulkBusyId(studentId);
     setBulkMessage("");
     try {
-      const subjectContentIds = content.filter((c) => c.subject === bulkSubject).map((c) => c.id);
-      if (subjectContentIds.length === 0) {
-        setBulkMessage("No content exists under this subject yet.");
-        setBulkBusy(false);
-        return;
-      }
-      if (revoke) {
+      if (hasAccess) {
         const { error } = await supabase
-          .from("access_grants")
+          .from("subject_access")
           .delete()
-          .eq("student_id", bulkStudent)
-          .in("content_id", subjectContentIds);
+          .eq("student_id", studentId)
+          .eq("subject", bulkSubject);
         if (error) throw error;
-        setBulkMessage(`Revoked all "${bulkSubject}" content for this student.`);
+        // Clean up any leftover one-off item grants for this subject too, so
+        // revoke is a clean, full cutoff rather than leaving old individual
+        // grants quietly still working.
+        const subjectContentIds = content.filter((c) => c.subject === bulkSubject).map((c) => c.id);
+        if (subjectContentIds.length) {
+          await supabase.from("access_grants").delete().eq("student_id", studentId).in("content_id", subjectContentIds);
+        }
       } else {
         const { data: sessionData } = await supabase.auth.getSession();
-        const rows = subjectContentIds.map((content_id) => ({
-          content_id,
-          student_id: bulkStudent,
-          granted_by: sessionData.session.user.id,
-        }));
-        // upsert so re-running this doesn't fail on items already granted
-        const { error } = await supabase.from("access_grants").upsert(rows, { onConflict: "content_id,student_id" });
+        const { error } = await supabase
+          .from("subject_access")
+          .upsert(
+            { student_id: studentId, subject: bulkSubject, granted_by: sessionData.session.user.id },
+            { onConflict: "student_id,subject" }
+          );
         if (error) throw error;
-        setBulkMessage(`Granted all "${bulkSubject}" content (${subjectContentIds.length} items) to this student.`);
       }
+      loadSubjectGrants(bulkSubject);
       if (selectedContent) loadGrants();
     } catch (err) {
       setBulkMessage("Error: " + err.message);
     }
-    setBulkBusy(false);
+    setBulkBusyId(null);
   }
 
   async function deleteStudent(student) {
@@ -123,6 +133,7 @@ export default function AccessControl() {
     if (!res.ok) return setMessage("Error: " + body.error);
     setStudents((prev) => prev.filter((s) => s.id !== student.id));
     setGrants((prev) => prev.filter((id) => id !== student.id));
+    setSubjectGrants((prev) => prev.filter((id) => id !== student.id));
   }
 
   // Group content by subject for the dropdown, so it's easy to find the right item.
@@ -138,30 +149,39 @@ export default function AccessControl() {
         <h2>Grant Access — Whole Subject</h2>
         <div className="card">
           <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
-            Gives (or removes) one student access to every video and PDF currently under a subject, in one click.
-            New content added to that subject later still needs to be granted separately (or run this again).
+            One-time, standing access — once granted, this covers every video and PDF currently under a subject
+            <strong> and anything added to it later</strong>, automatically. No need to re-grant when new content goes up.
           </p>
           <label style={{ fontSize: 13, color: "#64748b" }}>Subject</label>
-          <select value={bulkSubject} onChange={(e) => setBulkSubject(e.target.value)}>
+          <select value={bulkSubject} onChange={(e) => handleBulkSubjectChange(e.target.value)}>
             {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <label style={{ fontSize: 13, color: "#64748b" }}>Student</label>
-          <select value={bulkStudent} onChange={(e) => setBulkStudent(e.target.value)}>
-            {students.map((s) => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
-          </select>
-          {bulkMessage && <p className={bulkMessage.startsWith("Error") ? "error" : "success"}>{bulkMessage}</p>}
-          <div style={{ display: "flex", gap: 8 }}>
-            <button disabled={bulkBusy || !bulkStudent} onClick={() => bulkGrantSubject(false)}>
-              {bulkBusy ? "Working…" : `Grant all "${bulkSubject}"`}
-            </button>
-            <button className="secondary" disabled={bulkBusy || !bulkStudent} onClick={() => bulkGrantSubject(true)}>
-              Revoke all "{bulkSubject}"
-            </button>
-          </div>
+          {bulkMessage && <p className="error">{bulkMessage}</p>}
+          {students.length === 0 && <p style={{ color: "#64748b" }}>No students have signed up yet.</p>}
+          {students.map((s) => {
+            const hasAccess = subjectGrants.includes(s.id);
+            return (
+              <div className="content-item" key={s.id}>
+                <div>{s.full_name || s.email}<span className="badge">{s.email}</span></div>
+                <button
+                  className={hasAccess ? "secondary" : ""}
+                  disabled={bulkBusyId === s.id}
+                  onClick={() => toggleSubjectAccess(s.id, hasAccess)}
+                >
+                  {bulkBusyId === s.id ? "…" : hasAccess ? `✓ Has ${bulkSubject}` : `Grant ${bulkSubject}`}
+                </button>
+              </div>
+            );
+          })}
         </div>
 
         <h2>Grant Access — Individual Item</h2>
         <div className="card">
+          <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
+            For one-off items outside a full subject grant. Note: if a student already has standing access to this
+            item's whole subject (above), they can still see it even if it shows "Grant" here — revoke the subject
+            grant first to fully cut off access.
+          </p>
           <label style={{ fontSize: 13, color: "#64748b" }}>Content</label>
           <select value={selectedContent} onChange={(e) => setSelectedContent(e.target.value)}>
             {groupedContent.map((g) => (
