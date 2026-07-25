@@ -17,7 +17,14 @@ export function extractYoutubeId(input) {
 // shareable URL — same honest-limitations caveat as the video/PDF viewers.
 // youtube-nocookie.com is YouTube's privacy-enhanced embed domain and also
 // keeps this player off YouTube's own watch-page chrome (related videos,
-// channel link-outs, etc.).
+// channel link-outs, etc.). disablekb/iv_load_policy/cc_load_policy trim the
+// controls further. IMPORTANT: the title/channel-name overlay, the small
+// YouTube logo, and the share icon shown before playback starts are required
+// by YouTube's Terms of Service and cannot be removed by any embed parameter
+// or client-side code — this is true for every site embedding YouTube, not
+// something specific to this player. If a piece of content genuinely needs
+// zero YouTube branding, upload it via "Video (upload to storage)" instead —
+// that path uses ProtectedVideo.js, a fully custom player with none of this.
 //
 // startSeconds: resume/jump to a timestamp (?start=123 equivalent).
 // autoplay: only pass true if the student explicitly opted in (e.g. clicked
@@ -26,7 +33,14 @@ export function extractYoutubeId(input) {
 export default function ProtectedYouTube({ videoId, watermarkText, startSeconds, autoplay }) {
   if (!videoId) return <p className="error">Invalid or missing YouTube video.</p>;
 
-  const params = new URLSearchParams({ rel: "0", modestbranding: "1", playsinline: "1" });
+  const params = new URLSearchParams({
+    rel: "0",
+    modestbranding: "1",
+    playsinline: "1",
+    disablekb: "1", // no keyboard shortcuts (space/arrow seek, etc.)
+    iv_load_policy: "3", // hide video annotations/cards
+    cc_load_policy: "0", // don't force captions on
+  });
   if (startSeconds) params.set("start", String(Math.floor(startSeconds)));
   if (autoplay) params.set("autoplay", "1");
 
