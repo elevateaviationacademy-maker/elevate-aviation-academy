@@ -17,6 +17,14 @@ export default function InstructorDashboard() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
 
+  // Google Drive sync
+  const [rootFolderUrl, setRootFolderUrl] = useState("");
+  const [discovered, setDiscovered] = useState(null); // [{id, name, guessedSubject}]
+  const [discovering, setDiscovering] = useState(false);
+  const [driveFolders, setDriveFolders] = useState([]); // saved mappings
+  const [syncing, setSyncing] = useState(false);
+  const [driveMessage, setDriveMessage] = useState("");
+
   useEffect(() => {
     guardAndLoad();
   }, []);
@@ -27,11 +35,88 @@ export default function InstructorDashboard() {
     const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.session.user.id).single();
     if (profile?.role !== "instructor") return router.replace("/student/dashboard");
     loadContent();
+    loadDriveFolders();
   }
 
   async function loadContent() {
     const { data } = await supabase.from("content").select("*").order("created_at", { ascending: false });
     setContent(data || []);
+  }
+
+  async function authHeader() {
+    const { data: sessionData } = await supabase.auth.getSession();
+    return { "Content-Type": "application/json", Authorization: `Bearer ${sessionData.session.access_token}` };
+  }
+
+  async function loadDriveFolders() {
+    const res = await fetch("/api/admin/drive-folders", { method: "GET", headers: await authHeader() });
+    const body = await res.json();
+    if (res.ok) setDriveFolders(body.folders || []);
+  }
+
+  async function handleDiscoverFolders(e) {
+    e.preventDefault();
+    setDiscovering(true);
+    setDriveMessage("");
+    setDiscovered(null);
+    const res = await fetch("/api/admin/drive-list-subfolders", {
+      method: "POST",
+      headers: await authHeader(),
+      body: JSON.stringify({ rootFolderUrl }),
+    });
+    const body = await res.json();
+    setDiscovering(false);
+    if (!res.ok) return setDriveMessage("Error: " + body.error);
+    if (!body.folders.length) return setDriveMessage("No subfolders found in that Drive folder.");
+    setDiscovered(body.folders.map((f) => ({ ...f, chosenSubject: f.guessedSubject })));
+  }
+
+  function updateDiscoveredMapping(folderId, chosenSubject) {
+    setDiscovered((prev) => prev.map((f) => (f.id === folderId ? { ...f, chosenSubject } : f)));
+  }
+
+  async function handleSaveMappings() {
+    const mappings = discovered
+      .filter((f) => f.chosenSubject)
+      .map((f) => ({ subject: f.chosenSubject, folderId: f.id, folderName: f.name }));
+    if (!mappings.length) return setDriveMessage("Choose a subject for at least one folder first.");
+    setDriveMessage("");
+    const res = await fetch("/api/admin/drive-folders", {
+      method: "POST",
+      headers: await authHeader(),
+      body: JSON.stringify({ mappings }),
+    });
+    const body = await res.json();
+    if (!res.ok) return setDriveMessage("Error: " + body.error);
+    setDriveMessage(`Saved ${body.count} subject mapping(s).`);
+    setDiscovered(null);
+    setRootFolderUrl("");
+    loadDriveFolders();
+  }
+
+  async function handleUnmapFolder(subject) {
+    if (!confirm(`Stop syncing "${subject}" from Drive? Already-imported files stay in your content library.`)) return;
+    await fetch("/api/admin/drive-folders", { method: "DELETE", headers: await authHeader(), body: JSON.stringify({ subject }) });
+    loadDriveFolders();
+  }
+
+  async function handleSync(subject) {
+    setSyncing(true);
+    setDriveMessage("");
+    const res = await fetch("/api/admin/drive-sync", {
+      method: "POST",
+      headers: await authHeader(),
+      body: JSON.stringify(subject ? { subject } : {}),
+    });
+    const body = await res.json();
+    setSyncing(false);
+    if (!res.ok) return setDriveMessage("Error: " + body.error);
+    const summary = body.results
+      .map((r) => `${r.subject}: ${r.imported} new, ${r.skipped} already synced${r.errors.length ? `, ${r.errors.length} skipped with errors` : ""}`)
+      .join(" · ");
+    setDriveMessage(summary);
+    loadDriveFolders();
+    loadContent();
   }
 
   function resetForm() {
@@ -174,6 +259,78 @@ export default function InstructorDashboard() {
 
             <button type="submit" disabled={uploading}>{uploading ? "Saving…" : "Add Content"}</button>
           </form>
+        </div>
+
+        <h2>Sync from Google Drive</h2>
+        <div className="card">
+          <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
+            Drop PDFs/videos into a Drive folder (with a subfolder per subject) and pull them in here — they'll go
+            through the same protected viewer (watermark, no download) as anything you upload manually.
+            Share the root folder with the service account's email as a <strong>Viewer</strong> first.
+          </p>
+          {driveMessage && <p className={driveMessage.startsWith("Error") ? "error" : "success"}>{driveMessage}</p>}
+
+          {driveFolders.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              {driveFolders.map((f) => (
+                <div className="content-item" key={f.id}>
+                  <div>
+                    <strong>{f.subject}</strong>
+                    <span className="badge">
+                      {f.last_synced_at ? `Last synced ${new Date(f.last_synced_at).toLocaleString()}` : "Never synced"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button disabled={syncing} onClick={() => handleSync(f.subject)}>
+                      {syncing ? "Syncing…" : "Sync now"}
+                    </button>
+                    <button className="secondary" onClick={() => handleUnmapFolder(f.subject)}>
+                      Unmap
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <button disabled={syncing} onClick={() => handleSync(null)} style={{ marginTop: 8 }}>
+                {syncing ? "Syncing…" : "Sync all subjects"}
+              </button>
+            </div>
+          )}
+
+          <form onSubmit={handleDiscoverFolders}>
+            <label style={{ fontSize: 13, color: "#64748b" }}>Drive root folder link</label>
+            <input
+              placeholder="https://drive.google.com/drive/folders/xxxxxxxxxxxxxxxx"
+              value={rootFolderUrl}
+              onChange={(e) => setRootFolderUrl(e.target.value)}
+              required
+            />
+            <button type="submit" disabled={discovering}>
+              {discovering ? "Looking…" : "Find subject folders"}
+            </button>
+          </form>
+
+          {discovered && (
+            <div style={{ marginTop: 16 }}>
+              <p style={{ fontSize: 13, color: "#64748b" }}>
+                Found {discovered.length} folder(s). Confirm which subject each one maps to (auto-guessed where possible):
+              </p>
+              {discovered.map((f) => (
+                <div className="content-item" key={f.id}>
+                  <div>{f.name}</div>
+                  <select
+                    value={f.chosenSubject}
+                    onChange={(e) => updateDiscoveredMapping(f.id, e.target.value)}
+                  >
+                    <option value="">Skip this folder</option>
+                    {SUBJECTS.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+              <button onClick={handleSaveMappings} style={{ marginTop: 8 }}>Save mappings</button>
+            </div>
+          )}
         </div>
 
         <h2>Your Content</h2>
