@@ -3,6 +3,13 @@ import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { r2, BUCKET } from "../../../lib/r2";
 import { getDriveClient, classifyMimeType } from "../../../lib/googleDrive";
 
+// Video files can take a while to download from Drive and re-upload to
+// storage. Push the function's time budget as high as the hosting plan
+// allows (Vercel Hobby caps this around 60s regardless of what's set here;
+// Pro allows more) — long lecture videos may still need a smaller test file
+// first to confirm they fit within whatever ceiling the plan enforces.
+export const config = { maxDuration: 300 };
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
