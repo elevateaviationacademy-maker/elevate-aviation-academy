@@ -9,6 +9,8 @@ export default function StudentDashboard() {
   const [content, setContent] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [fullName, setFullName] = useState("");
+  const [todayItem, setTodayItem] = useState(null);
+  const [nextItem, setNextItem] = useState(null);
 
   useEffect(() => {
     guardAndLoad();
@@ -31,6 +33,25 @@ export default function StudentDashboard() {
       .order("created_at", { ascending: false })
       .limit(5);
     setAnnouncements(ann || []);
+
+    loadSchedule();
+  }
+
+  async function loadSchedule() {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    // Pull today plus a couple weeks ahead so we can find "today" and the
+    // next non-holiday day even across a run of consecutive holidays.
+    const { data } = await supabase
+      .from("schedule_items")
+      .select("*")
+      .gte("date", todayStr)
+      .order("date")
+      .limit(21);
+    if (!data || !data.length) return;
+    const today = data.find((d) => d.date === todayStr) || null;
+    setTodayItem(today);
+    const next = data.find((d) => d.date > todayStr && !d.is_holiday) || null;
+    setNextItem(next);
   }
 
   return (
@@ -45,6 +66,29 @@ export default function StudentDashboard() {
             <p>Keep working through your courses and practice exams — every session gets you closer to exam day.</p>
           </div>
         </div>
+
+        {(todayItem || nextItem) && (
+          <div className="card" style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+            <div>
+              <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>Today</p>
+              {todayItem?.is_holiday ? (
+                <strong style={{ color: "#92400e" }}>Holiday — no class today</strong>
+              ) : todayItem ? (
+                <strong>{todayItem.topic}</strong>
+              ) : (
+                <span style={{ color: "#94a3b8" }}>Nothing scheduled</span>
+              )}
+            </div>
+            {nextItem && (
+              <div>
+                <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>
+                  Next class — {new Date(nextItem.date).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+                </p>
+                <strong>{nextItem.topic}</strong>
+              </div>
+            )}
+          </div>
+        )}
 
         {announcements.length > 0 && (
           <>

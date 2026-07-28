@@ -20,6 +20,7 @@ export default function Navbar({ role }) {
             <a href="/instructor/dashboard">Content</a>
             <a href="/instructor/access">Access</a>
             <a href="/instructor/exams">Exams</a>
+            <a href="/instructor/schedule">Schedule</a>
             <a href="/instructor/results">Results</a>
             <a href="/instructor/comments">Comments</a>
             <a href="/instructor/announcements">Announcements</a>
