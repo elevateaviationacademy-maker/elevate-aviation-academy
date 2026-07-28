@@ -44,7 +44,11 @@ export default async function handler(req, res) {
   if (!attempt) {
     let questions;
     try {
-      questions = generatePaper(exam.subject, exam.chapters || [], exam.question_count);
+      const { data: customQuestions } = await supabaseAdmin
+        .from("custom_questions")
+        .select("*")
+        .eq("subject", exam.subject);
+      questions = generatePaper(exam.subject, exam.chapters || [], exam.question_count, customQuestions || []);
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }

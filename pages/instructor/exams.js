@@ -20,6 +20,15 @@ export default function InstructorExams() {
   const [message, setMessage] = useState("");
   const [stats, setStats] = useState({});
 
+  // Custom question creator
+  const [qChapter, setQChapter] = useState("");
+  const [qText, setQText] = useState("");
+  const [qOptions, setQOptions] = useState(["", "", "", ""]);
+  const [qCorrectIndex, setQCorrectIndex] = useState(0);
+  const [qSaving, setQSaving] = useState(false);
+  const [qMessage, setQMessage] = useState("");
+  const [customList, setCustomList] = useState([]);
+
   useEffect(() => {
     guardAndLoad();
   }, []);
@@ -71,6 +80,81 @@ export default function InstructorExams() {
 
   function toggleChapter(ch) {
     setSelectedChapters((prev) => (prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]));
+  }
+
+  useEffect(() => {
+    if (subject) loadCustomQuestions(subject);
+  }, [subject]);
+
+  async function loadCustomQuestions(subj) {
+    const { data } = await supabase
+      .from("custom_questions")
+      .select("*")
+      .eq("subject", subj)
+      .order("created_at", { ascending: false });
+    setCustomList(data || []);
+  }
+
+  function updateOption(idx, val) {
+    setQOptions((prev) => prev.map((o, i) => (i === idx ? val : o)));
+  }
+
+  function addOption() {
+    if (qOptions.length >= 6) return;
+    setQOptions((prev) => [...prev, ""]);
+  }
+
+  function removeOption(idx) {
+    if (qOptions.length <= 2) return;
+    setQOptions((prev) => prev.filter((_, i) => i !== idx));
+    setQCorrectIndex((prev) => (prev === idx ? 0 : prev > idx ? prev - 1 : prev));
+  }
+
+  function resetQuestionForm() {
+    setQChapter("");
+    setQText("");
+    setQOptions(["", "", "", ""]);
+    setQCorrectIndex(0);
+  }
+
+  async function submitQuestion(e) {
+    e.preventDefault();
+    setQMessage("");
+    const cleanOptions = qOptions.map((o) => o.trim()).filter(Boolean);
+    if (!qChapter.trim()) return setQMessage("Error: chapter name is required.");
+    if (!qText.trim()) return setQMessage("Error: question text is required.");
+    if (cleanOptions.length < 2) return setQMessage("Error: at least 2 non-empty options are required.");
+    const correctText = qOptions[qCorrectIndex]?.trim();
+    if (!correctText) return setQMessage("Error: pick a correct answer that has text filled in.");
+
+    setQSaving(true);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const { error } = await supabase.from("custom_questions").insert({
+      subject,
+      chapter: qChapter.trim(),
+      question: qText.trim(),
+      options: cleanOptions,
+      correct_answer: correctText,
+      created_by: sessionData.session.user.id,
+    });
+    setQSaving(false);
+    if (error) return setQMessage("Error: " + error.message);
+    setQMessage("Question added — it'll now show up in the pool for any exam on this subject.");
+    resetQuestionForm();
+    loadCustomQuestions(subject);
+    // Refresh the bank tree so the question-count shown next to the subject updates too.
+    const res = await fetch("/api/exam/subjects");
+    const json = await res.json();
+    if (res.ok) setTree(json);
+  }
+
+  async function deleteCustomQuestion(id) {
+    if (!confirm("Delete this question? It will no longer be pulled into any exam paper.")) return;
+    await supabase.from("custom_questions").delete().eq("id", id);
+    loadCustomQuestions(subject);
+    const res = await fetch("/api/exam/subjects");
+    const json = await res.json();
+    if (res.ok) setTree(json);
   }
 
   async function createExam(e) {
@@ -202,6 +286,80 @@ export default function InstructorExams() {
 
             <button type="submit" disabled={creating}>{creating ? "Creating…" : "Create Exam"}</button>
           </form>
+        </div>
+
+        <h2>Add Your Own Question — {subject}</h2>
+        <div className="card">
+          <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
+            Questions you add here are stored right alongside the built-in question bank and get pulled into any
+            exam on this subject, same as the rest — including auto-grading and the answer key. Every question
+            needs a marked correct answer; there's no ungraded/manual-review question type in this exam engine.
+          </p>
+          {qMessage && <p className={qMessage.startsWith("Error") ? "error" : "success"}>{qMessage}</p>}
+          <form onSubmit={submitQuestion}>
+            <label style={{ fontSize: 13, color: "#64748b" }}>Chapter</label>
+            <input
+              placeholder="e.g. Pressure, Atmosphere, RTF Phraseology…"
+              value={qChapter}
+              onChange={(e) => setQChapter(e.target.value)}
+            />
+
+            <label style={{ fontSize: 13, color: "#64748b" }}>Question</label>
+            <textarea
+              placeholder="Type the question here"
+              value={qText}
+              onChange={(e) => setQText(e.target.value)}
+              style={{ minHeight: 60 }}
+            />
+
+            <label style={{ fontSize: 13, color: "#64748b" }}>Options — select the radio button next to the correct one</label>
+            {qOptions.map((opt, idx) => (
+              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <input
+                  type="radio"
+                  name="correctOption"
+                  checked={qCorrectIndex === idx}
+                  onChange={() => setQCorrectIndex(idx)}
+                />
+                <input
+                  placeholder={`Option ${idx + 1}`}
+                  value={opt}
+                  onChange={(e) => updateOption(idx, e.target.value)}
+                  style={{ flex: 1, marginBottom: 0 }}
+                />
+                {qOptions.length > 2 && (
+                  <button type="button" className="secondary" onClick={() => removeOption(idx)}>✕</button>
+                )}
+              </div>
+            ))}
+            {qOptions.length < 6 && (
+              <button type="button" className="secondary" onClick={addOption} style={{ marginBottom: 12 }}>
+                + Add option
+              </button>
+            )}
+
+            <button type="submit" disabled={qSaving}>{qSaving ? "Adding…" : "Add Question"}</button>
+          </form>
+
+          {customList.length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <p style={{ fontSize: 13, color: "#64748b", fontWeight: 600 }}>
+                Your custom questions for {subject} ({customList.length})
+              </p>
+              {customList.map((q) => (
+                <div className="content-item" key={q.id}>
+                  <div>
+                    <span className="badge">{q.chapter}</span>
+                    <p style={{ margin: "4px 0 0" }}>{q.question}</p>
+                    <p style={{ color: "#64748b", margin: "2px 0 0", fontSize: 13 }}>
+                      Correct: {q.correct_answer}
+                    </p>
+                  </div>
+                  <button className="danger" onClick={() => deleteCustomQuestion(q.id)}>Delete</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <h2>Your Exams</h2>
