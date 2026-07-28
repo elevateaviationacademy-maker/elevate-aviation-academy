@@ -325,7 +325,7 @@ export default function InstructorExams() {
                   placeholder={`Option ${idx + 1}`}
                   value={opt}
                   onChange={(e) => updateOption(idx, e.target.value)}
-                  style={{ flex: 1, marginBottom: 0 }}
+                  style={{ flex: 1, minWidth: 0, marginBottom: 0 }}
                 />
                 {qOptions.length > 2 && (
                   <button type="button" className="secondary" onClick={() => removeOption(idx)}>✕</button>
