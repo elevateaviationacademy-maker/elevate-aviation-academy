@@ -9,8 +9,8 @@ export default function StudentDashboard() {
   const [content, setContent] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [fullName, setFullName] = useState("");
-  const [todayItem, setTodayItem] = useState(null);
-  const [nextItem, setNextItem] = useState(null);
+  const [todayItems, setTodayItems] = useState([]);
+  const [nextItems, setNextItems] = useState([]);
 
   useEffect(() => {
     guardAndLoad();
@@ -39,19 +39,26 @@ export default function StudentDashboard() {
 
   async function loadSchedule() {
     const todayStr = new Date().toISOString().slice(0, 10);
-    // Pull today plus a couple weeks ahead so we can find "today" and the
-    // next non-holiday day even across a run of consecutive holidays.
+    // Pull today plus a few weeks ahead so we can find "today" per subject
+    // and each subject's next non-holiday day even across holiday runs.
     const { data } = await supabase
       .from("schedule_items")
       .select("*")
       .gte("date", todayStr)
       .order("date")
-      .limit(21);
+      .limit(60);
     if (!data || !data.length) return;
-    const today = data.find((d) => d.date === todayStr) || null;
-    setTodayItem(today);
-    const next = data.find((d) => d.date > todayStr && !d.is_holiday) || null;
-    setNextItem(next);
+
+    setTodayItems(data.filter((d) => d.date === todayStr));
+
+    // Next non-holiday entry per subject (excluding today's date).
+    const bySubjectNext = {};
+    data
+      .filter((d) => d.date > todayStr && !d.is_holiday)
+      .forEach((d) => {
+        if (!bySubjectNext[d.subject]) bySubjectNext[d.subject] = d;
+      });
+    setNextItems(Object.values(bySubjectNext));
   }
 
   return (
@@ -67,24 +74,35 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {(todayItem || nextItem) && (
-          <div className="card" style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-            <div>
-              <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>Today</p>
-              {todayItem?.is_holiday ? (
-                <strong style={{ color: "#92400e" }}>Holiday — no class today</strong>
-              ) : todayItem ? (
-                <strong>{todayItem.topic}</strong>
-              ) : (
-                <span style={{ color: "#94a3b8" }}>Nothing scheduled</span>
-              )}
-            </div>
-            {nextItem && (
+        {(todayItems.length > 0 || nextItems.length > 0) && (
+          <div className="card">
+            {todayItems.length > 0 && (
+              <div style={{ marginBottom: nextItems.length ? 12 : 0 }}>
+                <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>Today</p>
+                {todayItems.map((item) => (
+                  <p key={item.subject} style={{ margin: "2px 0" }}>
+                    <span className="badge">{item.subject}</span>{" "}
+                    {item.is_holiday ? (
+                      <strong style={{ color: "#92400e" }}>Holiday — no class</strong>
+                    ) : (
+                      <strong>{item.topic}</strong>
+                    )}
+                  </p>
+                ))}
+              </div>
+            )}
+            {nextItems.length > 0 && (
               <div>
-                <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>
-                  Next class — {new Date(nextItem.date).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
-                </p>
-                <strong>{nextItem.topic}</strong>
+                <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>Next class</p>
+                {nextItems.map((item) => (
+                  <p key={item.subject} style={{ margin: "2px 0" }}>
+                    <span className="badge">{item.subject}</span>{" "}
+                    <strong>{item.topic}</strong>{" "}
+                    <span style={{ color: "#94a3b8", fontSize: 13 }}>
+                      — {new Date(item.date).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+                    </span>
+                  </p>
+                ))}
               </div>
             )}
           </div>

@@ -30,6 +30,7 @@ export default function Navbar({ role }) {
           <>
             <a href="/student/dashboard">My Courses</a>
             <a href="/exam">Practice Exams</a>
+            <a href="/student/announcements">Announcements</a>
           </>
         )}
         <a href="#" onClick={logout}>Log out</a>

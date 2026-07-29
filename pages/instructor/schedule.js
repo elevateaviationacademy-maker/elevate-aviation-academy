@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { supabase } from "../../lib/supabaseClient";
 import Navbar from "../../components/Navbar";
+import { SUBJECTS } from "../../lib/subjects";
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -33,6 +34,7 @@ function parseBulkText(text) {
 export default function InstructorSchedule() {
   const router = useRouter();
   const [items, setItems] = useState([]);
+  const [bulkSubject, setBulkSubject] = useState(SUBJECTS[0]);
   const [bulkText, setBulkText] = useState("");
   const [bulkErrors, setBulkErrors] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -40,6 +42,7 @@ export default function InstructorSchedule() {
 
   // Add/edit single day
   const [editDate, setEditDate] = useState(todayStr());
+  const [editSubject, setEditSubject] = useState(SUBJECTS[0]);
   const [editTopic, setEditTopic] = useState("");
   const [editHoliday, setEditHoliday] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
@@ -77,16 +80,21 @@ export default function InstructorSchedule() {
     }
     setSaving(true);
     const { data: sessionData } = await supabase.auth.getSession();
-    const withMeta = rows.map((r) => ({ ...r, created_by: sessionData.session.user.id, updated_at: new Date().toISOString() }));
-    const { error } = await supabase.from("schedule_items").upsert(withMeta, { onConflict: "date" });
+    const withMeta = rows.map((r) => ({
+      ...r,
+      subject: bulkSubject,
+      created_by: sessionData.session.user.id,
+      updated_at: new Date().toISOString(),
+    }));
+    const { error } = await supabase.from("schedule_items").upsert(withMeta, { onConflict: "date,subject" });
     setSaving(false);
     if (error) return setMessage("Error: " + error.message);
 
     const dates = rows.map((r) => r.date).sort();
-    setMessage(`Saved ${rows.length} day(s)${errors.length ? ` — ${errors.length} line(s) skipped, see below` : ""}.`);
+    setMessage(`Saved ${rows.length} day(s) for ${bulkSubject}${errors.length ? ` — ${errors.length} line(s) skipped, see below` : ""}.`);
     await postAnnouncement(
       "Schedule updated",
-      `The class schedule was updated for ${dates[0]}${dates.length > 1 ? ` through ${dates[dates.length - 1]}` : ""} (${rows.length} day${rows.length > 1 ? "s" : ""}).`
+      `The ${bulkSubject} schedule was updated for ${dates[0]}${dates.length > 1 ? ` through ${dates[dates.length - 1]}` : ""} (${rows.length} day${rows.length > 1 ? "s" : ""}).`
     );
     setBulkText("");
     load();
@@ -100,18 +108,21 @@ export default function InstructorSchedule() {
     const { error } = await supabase.from("schedule_items").upsert(
       {
         date: editDate,
+        subject: editSubject,
         topic: editHoliday ? null : editTopic.trim() || null,
         is_holiday: editHoliday,
         created_by: sessionData.session.user.id,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "date" }
+      { onConflict: "date,subject" }
     );
     setEditSaving(false);
     if (error) return setMessage("Error: " + error.message);
     await postAnnouncement(
       "Schedule updated",
-      editHoliday ? `${editDate} is now marked as a holiday.` : `${editDate} updated — topic: ${editTopic.trim()}.`
+      editHoliday
+        ? `${editDate} is now marked as a holiday for ${editSubject}.`
+        : `${editDate} (${editSubject}) updated — topic: ${editTopic.trim()}.`
     );
     setEditTopic("");
     setEditHoliday(false);
@@ -120,25 +131,30 @@ export default function InstructorSchedule() {
 
   function editRow(item) {
     setEditDate(item.date);
+    setEditSubject(item.subject);
     setEditTopic(item.topic || "");
     setEditHoliday(item.is_holiday);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function deleteDay(date) {
-    if (!confirm(`Remove ${date} from the schedule entirely?`)) return;
-    await supabase.from("schedule_items").delete().eq("date", date);
+  async function deleteDay(date, subject) {
+    if (!confirm(`Remove ${date} (${subject}) from the schedule entirely?`)) return;
+    await supabase.from("schedule_items").delete().eq("date", date).eq("subject", subject);
     load();
   }
 
-  // Group rows by month for a manageable collapsible view
-  const byMonth = {};
+  // Group: subject -> month -> [items]
+  const bySubject = {};
   items.forEach((item) => {
-    const monthKey = item.date.slice(0, 7); // YYYY-MM
-    byMonth[monthKey] = byMonth[monthKey] || [];
-    byMonth[monthKey].push(item);
+    const subject = item.subject || "Unsorted";
+    const monthKey = item.date.slice(0, 7);
+    bySubject[subject] = bySubject[subject] || {};
+    bySubject[subject][monthKey] = bySubject[subject][monthKey] || [];
+    bySubject[subject][monthKey].push(item);
   });
-  const monthOrder = Object.keys(byMonth).sort();
+  const subjectOrder = [...SUBJECTS, ...Object.keys(bySubject).filter((s) => !SUBJECTS.includes(s))].filter(
+    (s) => bySubject[s]
+  );
 
   return (
     <div>
@@ -155,6 +171,11 @@ export default function InstructorSchedule() {
           <form onSubmit={saveSingleDay}>
             <label style={{ fontSize: 13, color: "#64748b" }}>Date</label>
             <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} required />
+
+            <label style={{ fontSize: 13, color: "#64748b" }}>Subject</label>
+            <select value={editSubject} onChange={(e) => setEditSubject(e.target.value)}>
+              {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
 
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <input
@@ -187,6 +208,11 @@ export default function InstructorSchedule() {
             Re-pasting a date you already used overwrites that day rather than duplicating it.
           </p>
           <form onSubmit={submitBulk}>
+            <label style={{ fontSize: 13, color: "#64748b" }}>Subject — applies to every line below</label>
+            <select value={bulkSubject} onChange={(e) => setBulkSubject(e.target.value)}>
+              {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+
             <textarea
               placeholder={"2026-08-03: The Solar System\n2026-08-04: The Earth\n2026-08-08: HOLIDAY"}
               value={bulkText}
@@ -209,32 +235,47 @@ export default function InstructorSchedule() {
         {items.length === 0 && (
           <div className="card"><p style={{ color: "#64748b", margin: 0 }}>No schedule days added yet.</p></div>
         )}
-        {monthOrder.map((month) => (
-          <details key={month} className="card" style={{ marginBottom: 12 }}>
-            <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 16 }}>
-              {new Date(month + "-01").toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-              <span className="badge">{byMonth[month].length} days</span>
-            </summary>
-            <div style={{ marginTop: 12 }}>
-              {byMonth[month].map((item) => (
-                <div className="content-item" key={item.date}>
-                  <div>
-                    <strong>{new Date(item.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</strong>
-                    {item.is_holiday ? (
-                      <span className="badge" style={{ background: "#fef3c7", color: "#92400e" }}>Holiday</span>
-                    ) : (
-                      <span className="badge">{item.topic}</span>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button className="secondary" onClick={() => editRow(item)}>Edit</button>
-                    <button className="danger" onClick={() => deleteDay(item.date)}>Delete</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </details>
-        ))}
+        {subjectOrder.map((subject) => {
+          const months = bySubject[subject];
+          const monthOrder = Object.keys(months).sort();
+          const totalDays = Object.values(months).reduce((sum, m) => sum + m.length, 0);
+          return (
+            <details key={subject} className="card" style={{ marginBottom: 12 }}>
+              <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 16 }}>
+                {subject}
+                <span className="badge">{totalDays} days</span>
+              </summary>
+              <div style={{ marginTop: 12 }}>
+                {monthOrder.map((month) => (
+                  <details key={month} style={{ marginBottom: 8, paddingLeft: 8, borderLeft: "2px solid #e2e8f0" }}>
+                    <summary style={{ cursor: "pointer", fontWeight: 600, color: "#334155" }}>
+                      {new Date(month + "-01").toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+                      <span className="badge">{months[month].length}</span>
+                    </summary>
+                    <div style={{ marginTop: 8 }}>
+                      {months[month].map((item) => (
+                        <div className="content-item" key={item.date + item.subject}>
+                          <div>
+                            <strong>{new Date(item.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</strong>
+                            {item.is_holiday ? (
+                              <span className="badge" style={{ background: "#fef3c7", color: "#92400e" }}>Holiday</span>
+                            ) : (
+                              <span className="badge">{item.topic}</span>
+                            )}
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button className="secondary" onClick={() => editRow(item)}>Edit</button>
+                            <button className="danger" onClick={() => deleteDay(item.date, item.subject)}>Delete</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </details>
+          );
+        })}
       </div>
     </div>
   );
