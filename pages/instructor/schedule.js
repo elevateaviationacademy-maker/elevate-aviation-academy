@@ -8,35 +8,36 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
-// Parses lines like "2026-08-03: The Solar System" or "2026-08-08: HOLIDAY".
-// Returns { rows, errors } — errors list any lines that couldn't be read,
-// with their line number, so the instructor can fix and re-paste.
-function parseBulkText(text) {
+// Takes one topic per line (plus optional "HOLIDAY" lines) and a start date,
+// and assigns each non-blank line the next sequential calendar date — no
+// need to type out YYYY-MM-DD on every line. Blank lines are skipped
+// entirely (they don't consume a date slot).
+function parseSequentialLines(text, startDateStr) {
   const rows = [];
-  const errors = [];
-  text.split("\n").forEach((line, i) => {
+  if (!startDateStr) return { rows, error: "Pick a start date first." };
+  const start = new Date(startDateStr + "T00:00:00");
+  if (isNaN(start.getTime())) return { rows, error: "Start date isn't valid." };
+
+  let offset = 0;
+  text.split("\n").forEach((line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
-    const idx = trimmed.indexOf(":");
-    if (idx === -1) return errors.push(`Line ${i + 1}: no ":" found — expected "YYYY-MM-DD: Topic"`);
-    const datePart = trimmed.slice(0, idx).trim();
-    const rest = trimmed.slice(idx + 1).trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
-      return errors.push(`Line ${i + 1}: "${datePart}" isn't a YYYY-MM-DD date`);
-    }
-    const isHoliday = rest.toUpperCase() === "HOLIDAY";
-    if (!isHoliday && !rest) return errors.push(`Line ${i + 1}: no topic text after the date`);
-    rows.push({ date: datePart, topic: isHoliday ? null : rest, is_holiday: isHoliday });
+    const d = new Date(start);
+    d.setDate(d.getDate() + offset);
+    offset++;
+    const isHoliday = trimmed.toUpperCase() === "HOLIDAY";
+    rows.push({ date: d.toISOString().slice(0, 10), topic: isHoliday ? null : trimmed, is_holiday: isHoliday });
   });
-  return { rows, errors };
+  return { rows, error: null };
 }
 
 export default function InstructorSchedule() {
   const router = useRouter();
   const [items, setItems] = useState([]);
   const [bulkSubject, setBulkSubject] = useState(SUBJECTS[0]);
+  const [bulkStartDate, setBulkStartDate] = useState(todayStr());
   const [bulkText, setBulkText] = useState("");
-  const [bulkErrors, setBulkErrors] = useState([]);
+  const [bulkError, setBulkError] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -72,10 +73,11 @@ export default function InstructorSchedule() {
   async function submitBulk(e) {
     e.preventDefault();
     setMessage("");
-    const { rows, errors } = parseBulkText(bulkText);
-    setBulkErrors(errors);
+    const { rows, error: parseErr } = parseSequentialLines(bulkText, bulkStartDate);
+    setBulkError(parseErr || "");
+    if (parseErr) return;
     if (!rows.length) {
-      if (!errors.length) setMessage("Nothing to save — paste some lines first.");
+      setMessage("Nothing to save — paste some lines first.");
       return;
     }
     setSaving(true);
@@ -91,7 +93,7 @@ export default function InstructorSchedule() {
     if (error) return setMessage("Error: " + error.message);
 
     const dates = rows.map((r) => r.date).sort();
-    setMessage(`Saved ${rows.length} day(s) for ${bulkSubject}${errors.length ? ` — ${errors.length} line(s) skipped, see below` : ""}.`);
+    setMessage(`Saved ${rows.length} day(s) for ${bulkSubject}, starting ${dates[0]}.`);
     await postAnnouncement(
       "Schedule updated",
       `The ${bulkSubject} schedule was updated for ${dates[0]}${dates.length > 1 ? ` through ${dates[dates.length - 1]}` : ""} (${rows.length} day${rows.length > 1 ? "s" : ""}).`
@@ -118,12 +120,10 @@ export default function InstructorSchedule() {
     );
     setEditSaving(false);
     if (error) return setMessage("Error: " + error.message);
-    await postAnnouncement(
-      "Schedule updated",
-      editHoliday
-        ? `${editDate} is now marked as a holiday for ${editSubject}.`
-        : `${editDate} (${editSubject}) updated — topic: ${editTopic.trim()}.`
-    );
+    // Deliberately no announcement here — quick single-day tweaks (mostly
+    // holiday adjustments) would otherwise flood the feed. Only the bulk
+    // schedule save above posts an update.
+    setMessage("Saved.");
     setEditTopic("");
     setEditHoliday(false);
     load();
@@ -204,31 +204,31 @@ export default function InstructorSchedule() {
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Bulk paste a schedule</h3>
           <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
-            One line per day: <code>YYYY-MM-DD: Topic</code>, or <code>YYYY-MM-DD: HOLIDAY</code> for a day off.
-            Re-pasting a date you already used overwrites that day rather than duplicating it.
+            Pick the date the first line starts on, then paste one topic per line, in order. Each line takes the
+            next calendar day automatically — no need to type dates. Write <code>HOLIDAY</code> on a line for a day
+            off (matches your usual "Saturday - Exam / Sunday - Holiday" pattern — just put the actual topic instead
+            of "Exam" if it's not a holiday). Re-running this with an overlapping start date overwrites those days
+            rather than duplicating them.
           </p>
+          {bulkError && <p className="error">{bulkError}</p>}
           <form onSubmit={submitBulk}>
             <label style={{ fontSize: 13, color: "#64748b" }}>Subject — applies to every line below</label>
             <select value={bulkSubject} onChange={(e) => setBulkSubject(e.target.value)}>
               {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
 
+            <label style={{ fontSize: 13, color: "#64748b" }}>Start date — the first line below lands on this day</label>
+            <input type="date" value={bulkStartDate} onChange={(e) => setBulkStartDate(e.target.value)} required />
+
+            <label style={{ fontSize: 13, color: "#64748b" }}>Topics, one per line, in order</label>
             <textarea
-              placeholder={"2026-08-03: The Solar System\n2026-08-04: The Earth\n2026-08-08: HOLIDAY"}
+              placeholder={"The Solar System\nThe Earth\nProjections\nConvergency\nTime\nExam\nHOLIDAY"}
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
               style={{ minHeight: 160, fontFamily: "monospace", fontSize: 13 }}
             />
             <button type="submit" disabled={saving}>{saving ? "Saving…" : "Save schedule"}</button>
           </form>
-          {bulkErrors.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <p className="error" style={{ marginBottom: 4 }}>Some lines were skipped:</p>
-              {bulkErrors.map((e, i) => (
-                <p key={i} style={{ color: "#b91c1c", fontSize: 13, margin: "2px 0" }}>{e}</p>
-              ))}
-            </div>
-          )}
         </div>
 
         <h2>Your Schedule</h2>
