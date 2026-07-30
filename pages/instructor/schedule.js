@@ -149,6 +149,83 @@ export default function InstructorSchedule() {
     load();
   }
 
+  // Inserts a holiday at editDate and pushes everything after it (for the
+  // same subject) forward by one day, so a last-minute holiday doesn't just
+  // erase whatever was already scheduled that day. Delete-then-reinsert
+  // avoids unique(date,subject) collisions while shifting the whole chain.
+  async function insertHolidayAndShift() {
+    if (!editDate) return;
+    if (
+      !confirm(
+        `Mark ${editDate} (${editSubject}) as a holiday and shift everything scheduled after it forward by one day?`
+      )
+    )
+      return;
+    setEditSaving(true);
+    setMessage("");
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session.user.id;
+
+    const { data: chain, error: fetchErr } = await supabase
+      .from("schedule_items")
+      .select("*")
+      .eq("subject", editSubject)
+      .gte("date", editDate)
+      .order("date");
+    if (fetchErr) {
+      setEditSaving(false);
+      return setMessage("Error: " + fetchErr.message);
+    }
+
+    if (chain.length) {
+      const { error: delErr } = await supabase
+        .from("schedule_items")
+        .delete()
+        .eq("subject", editSubject)
+        .gte("date", editDate);
+      if (delErr) {
+        setEditSaving(false);
+        return setMessage("Error: " + delErr.message);
+      }
+    }
+
+    const newRows = [
+      {
+        date: editDate,
+        subject: editSubject,
+        topic: null,
+        is_holiday: true,
+        created_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    ];
+    chain.forEach((item) => {
+      const d = new Date(item.date + "T00:00:00");
+      d.setDate(d.getDate() + 1);
+      newRows.push({
+        date: d.toISOString().slice(0, 10),
+        subject: editSubject,
+        topic: item.topic,
+        is_holiday: item.is_holiday,
+        created_by: userId,
+        updated_at: new Date().toISOString(),
+      });
+    });
+
+    const { error: insErr } = await supabase.from("schedule_items").insert(newRows);
+    setEditSaving(false);
+    if (insErr) return setMessage("Error: " + insErr.message);
+
+    await postAnnouncement(
+      "Schedule updated",
+      `${editDate} is now a holiday for ${editSubject} — ${chain.length} day(s) after it shifted forward by one day.`
+    );
+    setMessage(`Inserted holiday on ${editDate} for ${editSubject} and shifted ${chain.length} day(s) forward.`);
+    setEditTopic("");
+    setEditHoliday(false);
+    load();
+  }
+
   function editRow(item) {
     setEditDate(item.date);
     setEditSubject(item.subject);
@@ -255,6 +332,24 @@ export default function InstructorSchedule() {
             )}
 
             <button type="submit" disabled={editSaving}>{editSaving ? "Saving…" : "Save this day"}</button>
+            {editHoliday && (
+              <>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={editSaving}
+                  onClick={insertHolidayAndShift}
+                  style={{ marginLeft: 8 }}
+                >
+                  {editSaving ? "Working…" : "Insert holiday & shift everything after forward"}
+                </button>
+                <p style={{ color: "#64748b", fontSize: 12, marginTop: 6 }}>
+                  "Save this day" just overwrites {editDate || "this date"} with a holiday — anything already
+                  scheduled there is lost, nothing else moves. "Insert & shift" keeps that day's topic by pushing
+                  it (and everything after it, for {editSubject}) forward by one day instead.
+                </p>
+              </>
+            )}
           </form>
         </div>
 
