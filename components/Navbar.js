@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 
 export default function Navbar({ role }) {
   const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   async function logout() {
     await supabase.auth.signOut();
@@ -14,7 +16,16 @@ export default function Navbar({ role }) {
       <a href={role === "instructor" ? "/instructor/dashboard" : "/student/dashboard"} className="navbar-brand">
         <img src="/logo.png" alt="Elevate Aviation Academy" className="navbar-logo" />
       </a>
-      <div>
+
+      <button
+        className="navbar-toggle"
+        aria-label="Toggle menu"
+        onClick={() => setMenuOpen((prev) => !prev)}
+      >
+        {menuOpen ? "✕" : "☰"}
+      </button>
+
+      <div className={`navbar-links${menuOpen ? " open" : ""}`} onClick={() => setMenuOpen(false)}>
         {role === "instructor" && (
           <>
             <a href="/instructor/dashboard">Content</a>
