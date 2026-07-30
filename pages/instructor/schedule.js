@@ -11,7 +11,10 @@ function todayStr() {
 // Takes one topic per line (plus optional "HOLIDAY" lines) and a start date,
 // and assigns each non-blank line the next sequential calendar date — no
 // need to type out YYYY-MM-DD on every line. Blank lines are skipped
-// entirely (they don't consume a date slot).
+// entirely (they don't consume a date slot). A trailing " x2" (or x3, x4…)
+// repeats that same topic across that many consecutive days instead of
+// requiring the line to be typed out multiple times — e.g. "Convergency x2"
+// takes two classes. Works on HOLIDAY lines too ("HOLIDAY x2").
 function parseSequentialLines(text, startDateStr) {
   const rows = [];
   if (!startDateStr) return { rows, error: "Pick a start date first." };
@@ -20,13 +23,23 @@ function parseSequentialLines(text, startDateStr) {
 
   let offset = 0;
   text.split("\n").forEach((line) => {
-    const trimmed = line.trim();
+    let trimmed = line.trim();
     if (!trimmed) return;
-    const d = new Date(start);
-    d.setDate(d.getDate() + offset);
-    offset++;
+
+    let repeat = 1;
+    const repeatMatch = trimmed.match(/\s+x(\d+)$/i);
+    if (repeatMatch) {
+      repeat = Math.max(1, parseInt(repeatMatch[1], 10));
+      trimmed = trimmed.slice(0, repeatMatch.index).trim();
+    }
+
     const isHoliday = trimmed.toUpperCase() === "HOLIDAY";
-    rows.push({ date: d.toISOString().slice(0, 10), topic: isHoliday ? null : trimmed, is_holiday: isHoliday });
+    for (let r = 0; r < repeat; r++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + offset);
+      offset++;
+      rows.push({ date: d.toISOString().slice(0, 10), topic: isHoliday ? null : trimmed, is_holiday: isHoliday });
+    }
   });
   return { rows, error: null };
 }
@@ -379,10 +392,12 @@ export default function InstructorSchedule() {
           <h3 style={{ marginTop: 0 }}>Bulk paste a schedule</h3>
           <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
             Pick the date the first line starts on, then paste one topic per line, in order. Each line takes the
-            next calendar day automatically. Write <code>HOLIDAY</code> on a line for a day off. Add another
-            subject block below to schedule several subjects in one save — e.g. Air Navigation and Meteorology
-            running in parallel. Re-running this with an overlapping start date overwrites those days rather than
-            duplicating them.
+            next calendar day automatically. Write <code>HOLIDAY</code> on a line for a day off. If a topic needs
+            more than one class, add <code>x2</code>, <code>x3</code>, etc. to the end of that line — e.g.{" "}
+            <code>Convergency x2</code> takes up two consecutive days instead of one. Add another subject block
+            below to schedule several subjects in one save — e.g. Air Navigation and Meteorology running in
+            parallel. Re-running this with an overlapping start date overwrites those days rather than duplicating
+            them.
           </p>
           {bulkError && <p className="error">{bulkError}</p>}
           <form onSubmit={submitBulk}>
@@ -422,7 +437,7 @@ export default function InstructorSchedule() {
 
                 <label style={{ fontSize: 13, color: "#64748b" }}>Topics, one per line, in order</label>
                 <textarea
-                  placeholder={"The Solar System\nThe Earth\nProjections\nConvergency\nTime\nExam\nHOLIDAY"}
+                  placeholder={"The Solar System\nThe Earth\nProjections\nConvergency x2\nTime\nExam\nHOLIDAY"}
                   value={track.text}
                   onChange={(e) => updateTrack(idx, { text: e.target.value })}
                   style={{ minHeight: 140, fontFamily: "monospace", fontSize: 13 }}
