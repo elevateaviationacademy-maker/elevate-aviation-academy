@@ -61,7 +61,29 @@ export default function InstructorSchedule() {
 
   async function load() {
     const { data } = await supabase.from("schedule_items").select("*").order("date");
-    setItems(data || []);
+    let rows = data || [];
+
+    // Auto-cleanup: once every day for a subject is in the past, that
+    // subject is "finished" — clear its whole schedule so history doesn't
+    // pile up. Only runs the delete for subjects that actually qualify.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const lastDateBySubject = {};
+    rows.forEach((r) => {
+      if (!lastDateBySubject[r.subject] || r.date > lastDateBySubject[r.subject]) {
+        lastDateBySubject[r.subject] = r.date;
+      }
+    });
+    const finishedSubjects = Object.entries(lastDateBySubject)
+      .filter(([, lastDate]) => lastDate < todayStr)
+      .map(([subject]) => subject);
+
+    if (finishedSubjects.length) {
+      await supabase.from("schedule_items").delete().in("subject", finishedSubjects);
+      rows = rows.filter((r) => !finishedSubjects.includes(r.subject));
+      setMessage(`Cleared finished schedule for: ${finishedSubjects.join(", ")}.`);
+    }
+
+    setItems(rows);
   }
 
   async function postAnnouncement(title, body) {
@@ -417,6 +439,9 @@ export default function InstructorSchedule() {
         </div>
 
         <h2>Your Schedule</h2>
+        <p style={{ color: "#64748b", fontSize: 13, marginTop: -8 }}>
+          A subject's schedule clears itself automatically once every day in it is in the past — no manual cleanup needed.
+        </p>
         {items.length === 0 && (
           <div className="card"><p style={{ color: "#64748b", margin: 0 }}>No schedule days added yet.</p></div>
         )}
