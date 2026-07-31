@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import { supabase } from "../../lib/supabaseClient";
 import Navbar from "../../components/Navbar";
 import { SUBJECTS } from "../../lib/subjects";
+import { localDateStr } from "../../lib/dateUtils";
 
 export default function StudentDashboard() {
   const router = useRouter();
@@ -38,7 +39,7 @@ export default function StudentDashboard() {
   }
 
   async function loadSchedule() {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = localDateStr();
     // Pull today plus a few weeks ahead so we can find "today" per subject
     // and each subject's next non-holiday day even across holiday runs.
     const { data } = await supabase

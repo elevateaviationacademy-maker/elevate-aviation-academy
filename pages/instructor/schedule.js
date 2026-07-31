@@ -3,9 +3,10 @@ import { useRouter } from "next/router";
 import { supabase } from "../../lib/supabaseClient";
 import Navbar from "../../components/Navbar";
 import { SUBJECTS } from "../../lib/subjects";
+import { localDateStr } from "../../lib/dateUtils";
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateStr();
 }
 
 // Takes one topic per line (plus optional "HOLIDAY" lines) and a start date,
@@ -38,7 +39,7 @@ function parseSequentialLines(text, startDateStr) {
       const d = new Date(start);
       d.setDate(d.getDate() + offset);
       offset++;
-      rows.push({ date: d.toISOString().slice(0, 10), topic: isHoliday ? null : trimmed, is_holiday: isHoliday });
+      rows.push({ date: localDateStr(d), topic: isHoliday ? null : trimmed, is_holiday: isHoliday });
     }
   });
   return { rows, error: null };
@@ -79,7 +80,7 @@ export default function InstructorSchedule() {
     // Auto-cleanup: once every day for a subject is in the past, that
     // subject is "finished" — clear its whole schedule so history doesn't
     // pile up. Only runs the delete for subjects that actually qualify.
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = localDateStr();
     const lastDateBySubject = {};
     rows.forEach((r) => {
       if (!lastDateBySubject[r.subject] || r.date > lastDateBySubject[r.subject]) {
@@ -238,7 +239,7 @@ export default function InstructorSchedule() {
       const d = new Date(item.date + "T00:00:00");
       d.setDate(d.getDate() + 1);
       newRows.push({
-        date: d.toISOString().slice(0, 10),
+        date: localDateStr(d),
         subject: editSubject,
         topic: item.topic,
         is_holiday: item.is_holiday,
@@ -331,7 +332,7 @@ export default function InstructorSchedule() {
 
     const nextDate = new Date(item.date + "T00:00:00");
     nextDate.setDate(nextDate.getDate() + 1);
-    const nextDateStr = nextDate.toISOString().slice(0, 10);
+    const nextDateStr = localDateStr(nextDate);
 
     const { data: chain, error: fetchErr } = await supabase
       .from("schedule_items")
@@ -370,7 +371,7 @@ export default function InstructorSchedule() {
       const d = new Date(c.date + "T00:00:00");
       d.setDate(d.getDate() + 1);
       newRows.push({
-        date: d.toISOString().slice(0, 10),
+        date: localDateStr(d),
         subject: item.subject,
         topic: c.topic,
         is_holiday: c.is_holiday,
@@ -427,7 +428,7 @@ export default function InstructorSchedule() {
       const d = new Date(c.date + "T00:00:00");
       d.setDate(d.getDate() - 1);
       return {
-        date: d.toISOString().slice(0, 10),
+        date: localDateStr(d),
         subject: item.subject,
         topic: c.topic,
         is_holiday: c.is_holiday,
