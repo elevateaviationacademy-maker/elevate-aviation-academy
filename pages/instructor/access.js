@@ -18,6 +18,14 @@ export default function AccessControl() {
   const [bulkBusyId, setBulkBusyId] = useState(null);
   const [bulkMessage, setBulkMessage] = useState("");
 
+  // Batch assignment + batch-wide granting
+  const [batchEdits, setBatchEdits] = useState({}); // student_id -> in-progress text value
+  const [batchSavingId, setBatchSavingId] = useState(null);
+  const [batchGrantSubject, setBatchGrantSubject] = useState(SUBJECTS[0]);
+  const [batchGrantName, setBatchGrantName] = useState("");
+  const [batchGranting, setBatchGranting] = useState(false);
+  const [batchMessage, setBatchMessage] = useState("");
+
   useEffect(() => {
     guardAndLoad();
   }, []);
@@ -114,6 +122,36 @@ export default function AccessControl() {
     setBulkBusyId(null);
   }
 
+  async function saveBatch(studentId) {
+    const value = (batchEdits[studentId] ?? "").trim();
+    setBatchSavingId(studentId);
+    const { error } = await supabase.from("profiles").update({ batch: value || null }).eq("id", studentId);
+    setBatchSavingId(null);
+    if (error) return setBatchMessage("Error: " + error.message);
+    setStudents((prev) => prev.map((s) => (s.id === studentId ? { ...s, batch: value || null } : s)));
+  }
+
+  async function grantBatch() {
+    const name = batchGrantName.trim();
+    if (!name) return setBatchMessage("Pick a batch first.");
+    const batchStudents = students.filter((s) => (s.batch || "").trim() === name);
+    if (!batchStudents.length) return setBatchMessage(`No students are in "${name}" yet.`);
+
+    setBatchGranting(true);
+    setBatchMessage("");
+    const { data: sessionData } = await supabase.auth.getSession();
+    const rows = batchStudents.map((s) => ({
+      student_id: s.id,
+      subject: batchGrantSubject,
+      granted_by: sessionData.session.user.id,
+    }));
+    const { error } = await supabase.from("subject_access").upsert(rows, { onConflict: "student_id,subject" });
+    setBatchGranting(false);
+    if (error) return setBatchMessage("Error: " + error.message);
+    setBatchMessage(`Granted ${batchGrantSubject} to ${batchStudents.length} student(s) in "${name}".`);
+    if (batchGrantSubject === bulkSubject) loadSubjectGrants(bulkSubject);
+  }
+
   async function deleteStudent(student) {
     const ok = window.confirm(
       `Permanently delete ${student.full_name || student.email}'s account?\n\nThis removes their login, all access grants, and all exam attempts. This cannot be undone.`
@@ -134,6 +172,11 @@ export default function AccessControl() {
     setStudents((prev) => prev.filter((s) => s.id !== student.id));
     setGrants((prev) => prev.filter((id) => id !== student.id));
     setSubjectGrants((prev) => prev.filter((id) => id !== student.id));
+    setBatchEdits((prev) => {
+      const next = { ...prev };
+      delete next[student.id];
+      return next;
+    });
   }
 
   // Group content by subject for the dropdown, so it's easy to find the right item.
@@ -175,7 +218,62 @@ export default function AccessControl() {
           })}
         </div>
 
-        <h2>Grant Access — Individual Item</h2>
+        <h2>Manage Batches</h2>
+        <div className="card">
+          <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
+            Tag each student into a batch (e.g. "Aug 2026", "Morning Batch") so you can grant access to a whole
+            cohort at once below, instead of one student at a time.
+          </p>
+          {students.length === 0 && <p style={{ color: "#64748b" }}>No students have signed up yet.</p>}
+          {students.map((s) => (
+            <div className="content-item" key={s.id}>
+              <div>{s.full_name || s.email}<span className="badge">{s.email}</span></div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  placeholder="Batch name"
+                  value={batchEdits[s.id] ?? s.batch ?? ""}
+                  onChange={(e) => setBatchEdits((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                  style={{ marginBottom: 0, width: 160 }}
+                />
+                <button disabled={batchSavingId === s.id} onClick={() => saveBatch(s.id)}>
+                  {batchSavingId === s.id ? "…" : "Save"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <h2>Grant Access — Whole Batch</h2>
+        <div className="card">
+          <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
+            Grants standing access (same as "Whole Subject" above — covers future content too) to every student
+            currently tagged into a batch, in one click.
+          </p>
+          {batchMessage && <p className={batchMessage.startsWith("Error") ? "error" : "success"}>{batchMessage}</p>}
+          <label style={{ fontSize: 13, color: "#64748b" }}>Subject</label>
+          <select value={batchGrantSubject} onChange={(e) => setBatchGrantSubject(e.target.value)}>
+            {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <label style={{ fontSize: 13, color: "#64748b" }}>Batch</label>
+          {(() => {
+            const batchNames = [...new Set(students.map((s) => (s.batch || "").trim()).filter(Boolean))];
+            if (!batchNames.length) {
+              return <p style={{ color: "#64748b", fontSize: 13 }}>No batches tagged yet — assign some above first.</p>;
+            }
+            return (
+              <select value={batchGrantName} onChange={(e) => setBatchGrantName(e.target.value)}>
+                <option value="">— choose a batch —</option>
+                {batchNames.map((b) => {
+                  const count = students.filter((s) => (s.batch || "").trim() === b).length;
+                  return <option key={b} value={b}>{b} ({count} student{count > 1 ? "s" : ""})</option>;
+                })}
+              </select>
+            );
+          })()}
+          <button disabled={batchGranting || !batchGrantName} onClick={grantBatch}>
+            {batchGranting ? "Granting…" : `Grant ${batchGrantSubject} to batch`}
+          </button>
+        </div>
         <div className="card">
           <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
             For one-off items outside a full subject grant. Note: if a student already has standing access to this
