@@ -312,6 +312,146 @@ export default function InstructorSchedule() {
     load();
   }
 
+  function labelFor(item) {
+    return item.topic || (item.is_holiday ? "Holiday" : "this day");
+  }
+
+  // Gives an already-saved topic one more day: duplicates it into the next
+  // date and shifts everything after that (same subject) forward by a day.
+  // Same underlying mechanism as the holiday insert, generalized to any item.
+  async function extendDay(item) {
+    if (
+      !confirm(`Give "${labelFor(item)}" (${item.subject}) one more day? Everything after it shifts forward by one day.`)
+    )
+      return;
+    setSaving(true);
+    setMessage("");
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session.user.id;
+
+    const nextDate = new Date(item.date + "T00:00:00");
+    nextDate.setDate(nextDate.getDate() + 1);
+    const nextDateStr = nextDate.toISOString().slice(0, 10);
+
+    const { data: chain, error: fetchErr } = await supabase
+      .from("schedule_items")
+      .select("*")
+      .eq("subject", item.subject)
+      .gte("date", nextDateStr)
+      .order("date");
+    if (fetchErr) {
+      setSaving(false);
+      return setMessage("Error: " + fetchErr.message);
+    }
+
+    if (chain.length) {
+      const { error: delErr } = await supabase
+        .from("schedule_items")
+        .delete()
+        .eq("subject", item.subject)
+        .gte("date", nextDateStr);
+      if (delErr) {
+        setSaving(false);
+        return setMessage("Error: " + delErr.message);
+      }
+    }
+
+    const newRows = [
+      {
+        date: nextDateStr,
+        subject: item.subject,
+        topic: item.topic,
+        is_holiday: item.is_holiday,
+        created_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    ];
+    chain.forEach((c) => {
+      const d = new Date(c.date + "T00:00:00");
+      d.setDate(d.getDate() + 1);
+      newRows.push({
+        date: d.toISOString().slice(0, 10),
+        subject: item.subject,
+        topic: c.topic,
+        is_holiday: c.is_holiday,
+        created_by: userId,
+        updated_at: new Date().toISOString(),
+      });
+    });
+
+    const { error: insErr } = await supabase.from("schedule_items").insert(newRows);
+    setSaving(false);
+    if (insErr) return setMessage("Error: " + insErr.message);
+    await postAnnouncement(
+      "Schedule updated",
+      `"${labelFor(item)}" (${item.subject}) extended by one more day — ${chain.length} day(s) after it shifted forward.`
+    );
+    setMessage(`Extended "${labelFor(item)}" by a day; shifted ${chain.length} day(s) forward.`);
+    load();
+  }
+
+  // Removes this one date and pulls everything after it (same subject) back
+  // by one day, closing the gap — the opposite of extendDay.
+  async function shortenDay(item) {
+    if (
+      !confirm(`Remove ${item.date} from "${labelFor(item)}" (${item.subject})? Everything after it shifts back by one day.`)
+    )
+      return;
+    setSaving(true);
+    setMessage("");
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session.user.id;
+
+    const { data: chain, error: fetchErr } = await supabase
+      .from("schedule_items")
+      .select("*")
+      .eq("subject", item.subject)
+      .gt("date", item.date)
+      .order("date");
+    if (fetchErr) {
+      setSaving(false);
+      return setMessage("Error: " + fetchErr.message);
+    }
+
+    const { error: delErr } = await supabase
+      .from("schedule_items")
+      .delete()
+      .eq("subject", item.subject)
+      .gte("date", item.date);
+    if (delErr) {
+      setSaving(false);
+      return setMessage("Error: " + delErr.message);
+    }
+
+    const newRows = chain.map((c) => {
+      const d = new Date(c.date + "T00:00:00");
+      d.setDate(d.getDate() - 1);
+      return {
+        date: d.toISOString().slice(0, 10),
+        subject: item.subject,
+        topic: c.topic,
+        is_holiday: c.is_holiday,
+        created_by: userId,
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    if (newRows.length) {
+      const { error: insErr } = await supabase.from("schedule_items").insert(newRows);
+      if (insErr) {
+        setSaving(false);
+        return setMessage("Error: " + insErr.message);
+      }
+    }
+    setSaving(false);
+    await postAnnouncement(
+      "Schedule updated",
+      `${item.date} removed from "${labelFor(item)}" (${item.subject}) — ${chain.length} day(s) after it shifted back by one day.`
+    );
+    setMessage(`Removed ${item.date}; shifted ${chain.length} day(s) back.`);
+    load();
+  }
+
   // Group: subject -> month -> [items]
   const bySubject = {};
   items.forEach((item) => {
@@ -516,7 +656,13 @@ export default function InstructorSchedule() {
                                 )}
                               </div>
                             </div>
-                            <div style={{ display: "flex", gap: 8 }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button className="secondary" disabled={saving} onClick={() => extendDay(item)} title="Give this topic one more day, shifting everything after forward">
+                                +1 day
+                              </button>
+                              <button className="secondary" disabled={saving} onClick={() => shortenDay(item)} title="Remove this day, shifting everything after back">
+                                −1 day
+                              </button>
                               <button className="secondary" onClick={() => editRow(item)}>Edit</button>
                               <button className="danger" onClick={() => deleteDay(item.date, item.subject)}>Delete</button>
                             </div>
