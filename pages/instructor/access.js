@@ -257,25 +257,38 @@ export default function AccessControl() {
           </select>
           <label style={{ fontSize: 13, color: "#64748b" }}>Batch</label>
           {(() => {
-            const seen = new Map(); // lowercased key -> { label, count }
+            const seen = new Map(); // lowercased key -> { label, names: [] }
             students.forEach((s) => {
               const raw = (s.batch || "").trim();
               if (!raw) return;
               const key = raw.toLowerCase();
-              if (!seen.has(key)) seen.set(key, { label: raw, count: 0 });
-              seen.get(key).count++;
+              if (!seen.has(key)) seen.set(key, { label: raw, names: [] });
+              seen.get(key).names.push(s.full_name || s.email);
             });
             const batches = [...seen.entries()];
             if (!batches.length) {
               return <p style={{ color: "#64748b", fontSize: 13 }}>No batches tagged yet — assign some above first.</p>;
             }
+            const selected = batches.find(([, v]) => v.label === batchGrantName);
             return (
-              <select value={batchGrantName} onChange={(e) => setBatchGrantName(e.target.value)}>
-                <option value="">— choose a batch —</option>
-                {batches.map(([key, { label, count }]) => (
-                  <option key={key} value={label}>{label} ({count} student{count > 1 ? "s" : ""})</option>
-                ))}
-              </select>
+              <>
+                <select value={batchGrantName} onChange={(e) => setBatchGrantName(e.target.value)}>
+                  <option value="">— choose a batch —</option>
+                  {batches.map(([key, { label, names }]) => {
+                    const preview = names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3} more` : "");
+                    return (
+                      <option key={key} value={label}>
+                        {label} ({names.length} student{names.length > 1 ? "s" : ""}) — {preview}
+                      </option>
+                    );
+                  })}
+                </select>
+                {selected && (
+                  <p style={{ color: "#64748b", fontSize: 13, marginTop: -6 }}>
+                    Includes: {selected[1].names.join(", ")}
+                  </p>
+                )}
+              </>
             );
           })()}
           <button disabled={batchGranting || !batchGrantName} onClick={grantBatch}>
