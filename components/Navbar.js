@@ -35,6 +35,7 @@ export default function Navbar({ role }) {
             <a href="/instructor/results">Results</a>
             <a href="/instructor/comments">Comments</a>
             <a href="/instructor/announcements">Announcements</a>
+            <a href="/nav-trainer">Nav Trainer</a>
           </>
         )}
         {role === "student" && (
@@ -42,6 +43,7 @@ export default function Navbar({ role }) {
             <a href="/student/dashboard">My Courses</a>
             <a href="/exam">Practice Exams</a>
             <a href="/student/announcements">Announcements</a>
+            <a href="/nav-trainer">Nav Trainer</a>
           </>
         )}
         <a href="#" onClick={logout}>Log out</a>
