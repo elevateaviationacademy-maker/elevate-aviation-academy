@@ -134,7 +134,8 @@ export default function AccessControl() {
   async function grantBatch() {
     const name = batchGrantName.trim();
     if (!name) return setBatchMessage("Pick a batch first.");
-    const batchStudents = students.filter((s) => (s.batch || "").trim() === name);
+    const nameKey = name.toLowerCase();
+    const batchStudents = students.filter((s) => (s.batch || "").trim().toLowerCase() === nameKey);
     if (!batchStudents.length) return setBatchMessage(`No students are in "${name}" yet.`);
 
     setBatchGranting(true);
@@ -256,17 +257,24 @@ export default function AccessControl() {
           </select>
           <label style={{ fontSize: 13, color: "#64748b" }}>Batch</label>
           {(() => {
-            const batchNames = [...new Set(students.map((s) => (s.batch || "").trim()).filter(Boolean))];
-            if (!batchNames.length) {
+            const seen = new Map(); // lowercased key -> { label, count }
+            students.forEach((s) => {
+              const raw = (s.batch || "").trim();
+              if (!raw) return;
+              const key = raw.toLowerCase();
+              if (!seen.has(key)) seen.set(key, { label: raw, count: 0 });
+              seen.get(key).count++;
+            });
+            const batches = [...seen.entries()];
+            if (!batches.length) {
               return <p style={{ color: "#64748b", fontSize: 13 }}>No batches tagged yet — assign some above first.</p>;
             }
             return (
               <select value={batchGrantName} onChange={(e) => setBatchGrantName(e.target.value)}>
                 <option value="">— choose a batch —</option>
-                {batchNames.map((b) => {
-                  const count = students.filter((s) => (s.batch || "").trim() === b).length;
-                  return <option key={b} value={b}>{b} ({count} student{count > 1 ? "s" : ""})</option>;
-                })}
+                {batches.map(([key, { label, count }]) => (
+                  <option key={key} value={label}>{label} ({count} student{count > 1 ? "s" : ""})</option>
+                ))}
               </select>
             );
           })()}
