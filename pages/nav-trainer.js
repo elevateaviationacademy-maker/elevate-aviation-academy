@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import dynamic from "next/dynamic";
 import { supabase } from "../lib/supabaseClient";
@@ -12,6 +12,13 @@ import {
   departure,
   greatCirclePath,
   rhumbLinePath,
+  graticuleMeridians,
+  graticuleParallels,
+  regionGraticule,
+  mercatorProject,
+  lambertProject,
+  polarStereoProject,
+  chooseLambertParallels,
 } from "../lib/navCalc";
 
 // react-globe.gl touches WebGL/DOM globals that don't exist during
@@ -59,6 +66,20 @@ export default function NavTrainer() {
   const [lat2Dir, setLat2Dir] = useState("N");
   const [lon2, setLon2] = useState("73.7781");
   const [lon2Dir, setLon2Dir] = useState("W");
+  const [showGrid, setShowGrid] = useState(true);
+
+  const globeWrapRef = useRef(null);
+  const [globeWidth, setGlobeWidth] = useState(800);
+
+  useEffect(() => {
+    if (!globeWrapRef.current) return;
+    const el = globeWrapRef.current;
+    const update = () => setGlobeWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     guard();
@@ -104,20 +125,97 @@ export default function NavTrainer() {
     if (!valid) return { points: [], paths: [] };
     const gcPts = greatCirclePath(signedLat1, signedLon1, signedLat2, signedLon2);
     const rlPts = rhumbLinePath(signedLat1, signedLon1, signedLat2, signedLon2);
+    const graticule = showGrid
+      ? [
+          ...graticuleMeridians(30).map((coords) => ({ coords, color: "rgba(255,255,255,0.45)", name: "" })),
+          ...graticuleParallels(30).map((coords) => ({ coords, color: "rgba(255,255,255,0.45)", name: "" })),
+        ]
+      : [];
     return {
       points: [
         { lat: signedLat1, lng: signedLon1, label: "A" },
         { lat: signedLat2, lng: signedLon2, label: "B" },
       ],
       paths: [
+        ...graticule,
         { coords: gcPts, color: "#f59e0b", name: "Great circle" },
         { coords: rlPts, color: "#38bdf8", name: "Rhumb line" },
       ],
     };
-  }, [signedLat1, signedLon1, signedLat2, signedLon2, valid]);
+  }, [signedLat1, signedLon1, signedLat2, signedLon2, valid, showGrid]);
 
   function fmt(n, decimals = 1) {
     return Number.isFinite(n) ? n.toFixed(decimals) : "—";
+  }
+
+  const [projection, setProjection] = useState("mercator");
+
+  const PROJECTIONS = {
+    mercator: {
+      label: "Mercator",
+      blurb: "The rhumb line (blue) is always a perfectly straight line here — that's what Mercator charts are built for. The great circle (orange) curves toward whichever pole is nearer.",
+    },
+    lambert: {
+      label: "Lambert Conformal Conic",
+      blurb: "Standard parallels are auto-chosen a sixth of the way in from each end (the classic rule used for aviation charts). Between them, the great circle is close to straight; the rhumb line curves toward the pole.",
+    },
+    polarN: {
+      label: "Polar Stereographic (N)",
+      blurb: "Centered on the North Pole. Meridians radiate out as straight lines; the great circle and rhumb line both curve unless the route runs due north-south along a meridian.",
+    },
+    polarS: {
+      label: "Polar Stereographic (S)",
+      blurb: "Centered on the South Pole — same idea as the northern version, mirrored.",
+    },
+  };
+
+  const chart = useMemo(() => {
+    if (!valid) return null;
+
+    const g = regionGraticule(signedLat1, signedLon1, signedLat2, signedLon2);
+    const { sp1, sp2, refLat } = chooseLambertParallels(signedLat1, signedLat2);
+
+    const projectFn = (lat, lon) => {
+      if (projection === "mercator") return mercatorProject(lat, lon, g.centerLon);
+      if (projection === "lambert") return lambertProject(lat, lon, sp1, sp2, refLat, g.centerLon);
+      if (projection === "polarN") return polarStereoProject(lat, lon, "N", g.centerLon);
+      return polarStereoProject(lat, lon, "S", g.centerLon);
+    };
+
+    const gcPts = greatCirclePath(signedLat1, signedLon1, signedLat2, signedLon2, 48).map(([la, lo]) => projectFn(la, lo));
+    const rlPts = rhumbLinePath(signedLat1, signedLon1, signedLat2, signedLon2, 48).map(([la, lo]) => projectFn(la, lo));
+    const meridians = g.meridians.map((line) => line.map(([la, lo]) => projectFn(la, lo)));
+    const parallels = g.parallels.map((line) => line.map(([la, lo]) => projectFn(la, lo)));
+    const ptA = projectFn(signedLat1, signedLon1);
+    const ptB = projectFn(signedLat2, signedLon2);
+
+    // Auto-fit everything into a fixed SVG viewport.
+    const all = [...gcPts, ...rlPts, ptA, ptB, ...meridians.flat(), ...parallels.flat()].filter(
+      (p) => Number.isFinite(p.x) && Number.isFinite(p.y)
+    );
+    const xs = all.map((p) => p.x), ys = all.map((p) => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const w = 900, h = 560, pad = 40;
+    const scale = Math.min((w - pad * 2) / (maxX - minX || 1), (h - pad * 2) / (maxY - minY || 1));
+    const toSvg = (p) => ({
+      x: pad + (p.x - minX) * scale,
+      y: h - pad - (p.y - minY) * scale, // flip so north is up
+    });
+
+    return {
+      gc: gcPts.map(toSvg),
+      rl: rlPts.map(toSvg),
+      meridians: meridians.map((line) => line.map(toSvg)),
+      parallels: parallels.map((line) => line.map(toSvg)),
+      a: toSvg(ptA),
+      b: toSvg(ptB),
+      w, h,
+    };
+  }, [signedLat1, signedLon1, signedLat2, signedLon2, valid, projection]);
+
+  function svgPolyline(points) {
+    return points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
   }
 
   return (
@@ -215,12 +313,16 @@ export default function NavTrainer() {
         )}
 
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <div style={{ padding: 16, display: "flex", gap: 20, alignItems: "center", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ padding: 16, display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
             <span style={{ fontSize: 13 }}><span style={{ color: "#f59e0b" }}>●</span> Great circle (shortest path)</span>
             <span style={{ fontSize: 13 }}><span style={{ color: "#38bdf8" }}>●</span> Rhumb line (constant track)</span>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginLeft: "auto" }}>
+              <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+              Latitude/longitude grid
+            </label>
           </div>
-          {valid && (
-            <div style={{ width: "100%", height: 560, background: "#000" }}>
+          <div ref={globeWrapRef} style={{ width: "100%", height: 560, background: "#000" }}>
+            {valid && (
               <Globe
                 globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
                 bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
@@ -238,14 +340,50 @@ export default function NavTrainer() {
                 pathPointLng={(p) => p[1]}
                 pathColor={(p) => p.color}
                 pathLabel={(p) => p.name}
-                pathStroke={2}
-                pathDashLength={0.01}
-                pathDashGap={0.004}
-                pathDashAnimateTime={8000}
-                width={typeof window !== "undefined" ? Math.min(window.innerWidth - 40, 1200) : 800}
+                pathStroke={(p) => (p.name ? 2 : 0.6)}
+                pathDashLength={(p) => (p.name ? 0.01 : 1)}
+                pathDashGap={(p) => (p.name ? 0.004 : 0)}
+                pathDashAnimateTime={(p) => (p.name ? 8000 : 0)}
+                width={globeWidth}
                 height={560}
               />
-            </div>
+            )}
+          </div>
+        </div>
+
+        <h2>Chart Projections</h2>
+        <p style={{ color: "#64748b", fontSize: 14, marginTop: -8, marginBottom: 16 }}>
+          The same route "cut flat" — this is what actually shows up on the charts used for real flight planning.
+        </p>
+        <div className="card">
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+            {Object.entries(PROJECTIONS).map(([key, p]) => (
+              <button
+                key={key}
+                className={projection === key ? "" : "secondary"}
+                onClick={() => setProjection(key)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{PROJECTIONS[projection].blurb}</p>
+
+          {chart && (
+            <svg viewBox={`0 0 ${chart.w} ${chart.h}`} style={{ width: "100%", height: "auto", background: "#0f172a", borderRadius: 8 }}>
+              {chart.meridians.map((line, i) => (
+                <polyline key={`m${i}`} points={svgPolyline(line)} fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1" />
+              ))}
+              {chart.parallels.map((line, i) => (
+                <polyline key={`p${i}`} points={svgPolyline(line)} fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1" />
+              ))}
+              <polyline points={svgPolyline(chart.gc)} fill="none" stroke="#f59e0b" strokeWidth="2.5" />
+              <polyline points={svgPolyline(chart.rl)} fill="none" stroke="#38bdf8" strokeWidth="2.5" />
+              <circle cx={chart.a.x} cy={chart.a.y} r="5" fill="#fff" />
+              <text x={chart.a.x + 10} y={chart.a.y + 4} fill="#fff" fontSize="14">A</text>
+              <circle cx={chart.b.x} cy={chart.b.y} r="5" fill="#fff" />
+              <text x={chart.b.x + 10} y={chart.b.y + 4} fill="#fff" fontSize="14">B</text>
+            </svg>
           )}
         </div>
       </div>
