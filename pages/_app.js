@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import "../styles/globals.css";
+import InstallGate from "../components/InstallGate";
 
 export default function App({ Component, pageProps }) {
   useEffect(() => {
@@ -8,5 +9,9 @@ export default function App({ Component, pageProps }) {
     }
   }, []);
 
-  return <Component {...pageProps} />;
+  return (
+    <InstallGate>
+      <Component {...pageProps} />
+    </InstallGate>
+  );
 }
