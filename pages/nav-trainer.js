@@ -12,6 +12,7 @@ import {
   departure,
   greatCirclePath,
   rhumbLinePath,
+  dateLineInfo,
   graticuleMeridians,
   graticuleParallels,
   regionGraticule,
@@ -118,7 +119,8 @@ export default function NavTrainer() {
     const conv = convergency(signedLat1, signedLon1, signedLat2, signedLon2);
     const ca = conversionAngle(signedLat1, signedLon1, signedLat2, signedLon2);
     const dep = departure(signedLat1, signedLon1, signedLat2, signedLon2);
-    return { gc, rl, cl, conv, ca, dep };
+    const dl = dateLineInfo(signedLat1, signedLon1, signedLat2, signedLon2);
+    return { gc, rl, cl, conv, ca, dep, dl };
   }, [signedLat1, signedLon1, signedLat2, signedLon2, valid]);
 
   const globeData = useMemo(() => {
@@ -146,6 +148,15 @@ export default function NavTrainer() {
 
   function fmt(n, decimals = 1) {
     return Number.isFinite(n) ? n.toFixed(decimals) : "—";
+  }
+
+  function fmtHours(h) {
+    if (!Number.isFinite(h)) return "—";
+    const sign = h < 0 ? "-" : "";
+    const abs = Math.abs(h);
+    const hh = Math.floor(abs);
+    const mm = Math.round((abs - hh) * 60);
+    return `${sign}${hh}h ${mm}m`;
   }
 
   const [projection, setProjection] = useState("mercator");
@@ -309,6 +320,37 @@ export default function NavTrainer() {
                 <strong>{fmt(results.rl.track)}°T</strong>
               </div>
             </div>
+          </div>
+        )}
+
+        {results && (
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Time & International Date Line</h3>
+            <p style={{ color: "#64748b", fontSize: 13, marginTop: 0 }}>
+              15° of longitude = 1 hour. Local Mean Time gets later heading east, earlier heading west — that's
+              the whole basis of time zones. B is {results.dl.timeDiffHours >= 0 ? "ahead of" : "behind"} A by:
+            </p>
+            <p style={{ marginBottom: 16 }}>
+              <strong style={{ fontSize: 20 }}>{fmtHours(Math.abs(results.dl.timeDiffHours))}</strong>
+            </p>
+
+            {results.dl.crossesIDL ? (
+              <div style={{ background: "#fef3c7", borderRadius: 8, padding: 12 }}>
+                <p style={{ margin: 0, fontWeight: 600, color: "#92400e" }}>
+                  This route crosses the International Date Line, heading {results.dl.direction}.
+                </p>
+                <p style={{ margin: "4px 0 0", color: "#92400e", fontSize: 14 }}>
+                  {results.dl.dayChange < 0
+                    ? "Crossing eastbound (Asia/Pacific → Americas direction) — subtract one day from the calendar date on arrival."
+                    : "Crossing westbound (Americas → Asia/Pacific direction) — add one day to the calendar date on arrival."}
+                </p>
+              </div>
+            ) : (
+              <p style={{ color: "#64748b", fontSize: 14, margin: 0 }}>
+                This route doesn't cross the ±180° meridian, so no date adjustment is needed — only the time
+                difference above applies.
+              </p>
+            )}
           </div>
         )}
 
